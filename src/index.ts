@@ -7,10 +7,11 @@ import {
 import StorageBase, { type ReadOptions, type Image } from 'ghost-storage-base'
 import errors from '@tryghost/errors'
 import tpl from '@tryghost/tpl'
-import { join } from 'path'
+import { join, dirname, parse } from 'path'
 import { createReadStream } from 'fs'
 import type { Readable } from 'stream'
 import type { Handler } from 'express'
+import sharp from 'sharp'
 
 const stripLeadingSlash = (s: string) =>
   s.indexOf('/') === 0 ? s.substring(1) : s
@@ -30,6 +31,8 @@ type Config = {
 }
 
 class S3Storage extends StorageBase {
+  private imageSizes = [1920, 1440, 960, 480, 240, 120]
+
   accessKeyId?: string
   secretAccessKey?: string
   region?: string
@@ -152,13 +155,51 @@ class S3Storage extends StorageBase {
     return parsedUrl.pathname
   }
 
+  async saveImageVariants(image: Image, originalFileName: string) {
+    const fileDir = dirname(originalFileName)
+    const { name: fileName } = parse(originalFileName)
+    const variantPaths: string[] = []
+
+    // Save resized images
+    for (const width of this.imageSizes) {
+      const resizedFilePath = join(
+        fileDir,
+        'size',
+        `w${width}`,
+        `${fileName}.webp`
+      )
+
+      const webpBuffer = await sharp(image.path)
+        .resize({ width })
+        .webp({ quality: 80 })
+        .toBuffer()
+
+      const config: PutObjectCommandInput = {
+        ACL: this.acl,
+        Body: webpBuffer,
+        Bucket: this.bucket,
+        CacheControl: `max-age=${30 * 24 * 60 * 60}`,
+        ContentType: 'image/webp',
+        Key: stripLeadingSlash(resizedFilePath),
+      }
+
+      /**
+       * Save original image to S3
+       */
+      await this.s3().putObject(config)
+
+      variantPaths.push(`${this.host}/${stripLeadingSlash(resizedFilePath)}`)
+    }
+
+    return variantPaths
+  }
+
   async save(image: Image, targetDir?: string) {
     const directory = targetDir || this.getTargetDir(this.pathPrefix)
-
-    const fileName = await this.getUniqueFileName(image, directory)
+    const fileName = this.getUniqueFileName(image, directory)
     const file = createReadStream(image.path)
 
-    let config: PutObjectCommandInput = {
+    const config: PutObjectCommandInput = {
       ACL: this.acl,
       Body: file,
       Bucket: this.bucket,
@@ -166,9 +207,16 @@ class S3Storage extends StorageBase {
       ContentType: image.type,
       Key: stripLeadingSlash(fileName),
     }
+
+    /**
+     * Save original image to S3
+     */
     await this.s3().putObject(config)
 
-    return `${this.host}/${stripLeadingSlash(fileName)}`
+    // Save resized images to S3 in webp format
+    const [largestVaraint] = await this.saveImageVariants(image, directory)
+
+    return largestVaraint
   }
 
   serve(): Handler {
