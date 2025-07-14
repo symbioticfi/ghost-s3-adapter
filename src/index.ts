@@ -7,10 +7,11 @@ import {
 import StorageBase, { type ReadOptions, type Image } from 'ghost-storage-base'
 import errors from '@tryghost/errors'
 import tpl from '@tryghost/tpl'
-import { join } from 'path'
+import { join, dirname, parse } from 'path'
 import { createReadStream } from 'fs'
 import type { Readable } from 'stream'
 import type { Handler } from 'express'
+import sharp from 'sharp'
 
 const stripLeadingSlash = (s: string) =>
   s.indexOf('/') === 0 ? s.substring(1) : s
@@ -30,6 +31,8 @@ type Config = {
 }
 
 class S3Storage extends StorageBase {
+  private imageSizes = [1920, 1440, 960, 480, 240]
+
   accessKeyId?: string
   secretAccessKey?: string
   region?: string
@@ -152,21 +155,63 @@ class S3Storage extends StorageBase {
     return parsedUrl.pathname
   }
 
+  async saveImageVariants(image: Image, originalFileName: string) {
+    const fileDir = dirname(originalFileName)
+    const { name: fileName } = parse(originalFileName)
+
+    return Promise.all(
+      this.imageSizes.map(async (width) => {
+        const resizedFilePath = join(
+          fileDir,
+          'size',
+          `w${width}`,
+          `${fileName}.webp`
+        )
+
+        const webpBuffer = await sharp(image.path)
+          .resize({ width })
+          .webp({ quality: 80 })
+          .toBuffer()
+
+        const config: PutObjectCommandInput = {
+          ACL: this.acl,
+          Body: webpBuffer,
+          Bucket: this.bucket,
+          CacheControl: `max-age=${30 * 24 * 60 * 60}`,
+          ContentType: 'image/webp',
+          Key: stripLeadingSlash(resizedFilePath),
+        }
+
+        /**
+         * Save original image to S3
+         */
+        await this.s3().putObject(config)
+
+        return `${this.host}/${stripLeadingSlash(resizedFilePath)}`
+      })
+    )
+  }
+
   async save(image: Image, targetDir?: string) {
     const directory = targetDir || this.getTargetDir(this.pathPrefix)
-
     const fileName = await this.getUniqueFileName(image, directory)
-    const file = createReadStream(image.path)
 
-    let config: PutObjectCommandInput = {
+    const config: PutObjectCommandInput = {
       ACL: this.acl,
-      Body: file,
+      Body: createReadStream(image.path),
       Bucket: this.bucket,
       CacheControl: `max-age=${30 * 24 * 60 * 60}`,
       ContentType: image.type,
       Key: stripLeadingSlash(fileName),
     }
-    await this.s3().putObject(config)
+
+    await Promise.all([
+      // Save original image to S3
+      this.s3().putObject(config),
+
+      // Save resized images to S3 in webp format
+      this.saveImageVariants(image, fileName),
+    ])
 
     return `${this.host}/${stripLeadingSlash(fileName)}`
   }
