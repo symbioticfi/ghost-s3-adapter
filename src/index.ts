@@ -31,7 +31,7 @@ type Config = {
 }
 
 class S3Storage extends StorageBase {
-  private imageSizes = [1920, 1440, 960, 480, 240, 120]
+  private imageSizes = [1920, 1440, 960, 480, 240]
 
   accessKeyId?: string
   secretAccessKey?: string
@@ -158,63 +158,60 @@ class S3Storage extends StorageBase {
   async saveImageVariants(image: Image, originalFileName: string) {
     const fileDir = dirname(originalFileName)
     const { name: fileName } = parse(originalFileName)
-    const variantPaths: string[] = []
 
-    // Save resized images
-    for (const width of this.imageSizes) {
-      const resizedFilePath = join(
-        fileDir,
-        'size',
-        `w${width}`,
-        `${fileName}.webp`
-      )
+    return Promise.all(
+      this.imageSizes.map(async (width) => {
+        const resizedFilePath = join(
+          fileDir,
+          'size',
+          `w${width}`,
+          `${fileName}.webp`
+        )
 
-      const webpBuffer = await sharp(image.path)
-        .resize({ width })
-        .webp({ quality: 80 })
-        .toBuffer()
+        const webpBuffer = await sharp(image.path)
+          .resize({ width })
+          .webp({ quality: 80 })
+          .toBuffer()
 
-      const config: PutObjectCommandInput = {
-        ACL: this.acl,
-        Body: webpBuffer,
-        Bucket: this.bucket,
-        CacheControl: `max-age=${30 * 24 * 60 * 60}`,
-        ContentType: 'image/webp',
-        Key: stripLeadingSlash(resizedFilePath),
-      }
+        const config: PutObjectCommandInput = {
+          ACL: this.acl,
+          Body: webpBuffer,
+          Bucket: this.bucket,
+          CacheControl: `max-age=${30 * 24 * 60 * 60}`,
+          ContentType: 'image/webp',
+          Key: stripLeadingSlash(resizedFilePath),
+        }
 
-      /**
-       * Save original image to S3
-       */
-      await this.s3().putObject(config)
+        /**
+         * Save original image to S3
+         */
+        await this.s3().putObject(config)
 
-      variantPaths.push(`${this.host}/${stripLeadingSlash(resizedFilePath)}`)
-    }
-
-    return variantPaths
+        return `${this.host}/${stripLeadingSlash(resizedFilePath)}`
+      })
+    )
   }
 
   async save(image: Image, targetDir?: string) {
     const directory = targetDir || this.getTargetDir(this.pathPrefix)
-    const fileName = this.getUniqueFileName(image, directory)
-    const file = createReadStream(image.path)
+    const fileName = await this.getUniqueFileName(image, directory)
 
     const config: PutObjectCommandInput = {
       ACL: this.acl,
-      Body: file,
+      Body: createReadStream(image.path),
       Bucket: this.bucket,
       CacheControl: `max-age=${30 * 24 * 60 * 60}`,
       ContentType: image.type,
       Key: stripLeadingSlash(fileName),
     }
 
-    /**
-     * Save original image to S3
-     */
-    await this.s3().putObject(config)
+    await Promise.all([
+      // Save original image to S3
+      this.s3().putObject(config),
 
-    // Save resized images to S3 in webp format
-    await this.saveImageVariants(image, directory)
+      // Save resized images to S3 in webp format
+      this.saveImageVariants(image, fileName),
+    ])
 
     return `${this.host}/${stripLeadingSlash(fileName)}`
   }
