@@ -214,9 +214,9 @@ class S3Storage extends StorageBase {
     await this.s3().putObject(config)
 
     // Save resized images to S3 in webp format
-    const [largestVaraint] = await this.saveImageVariants(image, directory)
+    await this.saveImageVariants(image, directory)
 
-    return largestVaraint
+    return `${this.host}/${stripLeadingSlash(fileName)}`
   }
 
   serve(): Handler {
