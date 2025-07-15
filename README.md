@@ -1,4 +1,4 @@
-# GhoS3
+# Symbiotic Ghost S3 adapter
 
 An AWS S3 storage adapter tested on Ghost 5.x.
 
@@ -17,23 +17,23 @@ On my blog [_The Base_](https://base.of.sb), I use [Cloudflare R2](https://www.c
 ## Installation
 
 ```bash
-# Install ghos3 package
-npm install ghos3
-
 # Create directory to storage adapter
 mkdir -p ./content/adapters/storage
 
-# Copy package files to s3 storage folder
-cp -r ./node_modules/ghos3/* ./content/adapters/storage/s3
+# Go to the directory
+cd ./content/adapters/storage
 
-# Remove unnecessary files generated from ghos3 installation
-rm -Rf node_modules package-lock.json package.json
+# Download the adapter sources
+curl -L -o ghost-s3-adapter.zip https://github.com/symbioticfi/ghost-s3-adapter/archive/refs/heads/main.zip
 
-# Move to s3 storage folder
-cd ./content/adapters/storage/s3
+# Unzip the adapter sources into s3 directory
+unzip ghost-s3-adapter.zip && mv ghost-s3-adapter-main s3
 
-# Resolve dependencies
-npm install
+# Remove the no longer needed archive file
+rm ghost-s3-adapter.zip
+
+# Build the s3 adapter
+cd ./s3 && yarn install && yarn build
 ```
 
 ## Configuration
@@ -61,6 +61,14 @@ Largely the same, but note `signatureVersion` and `serverSideEncryption` are rem
     "acl": "YOUR_OPTIONAL_ACL (See note 3 below)",
   }
 }
+```
+
+Disable built-in image optimizations to reduce images upload and processing time
+
+```json
+"imageOptimization": {
+  "resize": false
+},
 ```
 
 ### Notes
