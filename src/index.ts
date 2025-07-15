@@ -209,7 +209,14 @@ class S3Storage extends StorageBase {
       this.s3().putObject(config),
 
       // Save resized images to S3 in webp format
-      this.saveImageVariants(image, fileName),
+      this.saveImageVariants(image, fileName).catch((err) => {
+        /**
+         * Do not fail the original image upload if resizing fails.
+         * This is useful for cases where the original image is uploaded successfully,
+         * but resizing to webp format fails due to some reason (e.g., unsupported format).
+         */
+        console.warn('Error saving image variants:', err)
+      }),
     ])
 
     return `${this.host}/${stripLeadingSlash(fileName)}`
